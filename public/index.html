@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Briefing Comercial Sencia</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Italiana&family=Figtree:wght@400;500;600&display=swap">
+<style>
+:root{
+  --bg:#EFF0EC; --surface:#FAFAF7; --ink:#20251F; --muted:#626A60; --line:#D3D6CE;
+  --accent:#3E5A4C; --accent-ink:#F4F6F1; --chip:#E4E7E0; --focus:#7FA08E;
+  --display:"Italiana","Didot","Bodoni 72",Georgia,serif;
+  --body:"Figtree","Segoe UI",system-ui,sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#171A17; --surface:#1F231F; --ink:#E9ECE6; --muted:#9BA398; --line:#343A33;
+  --accent:#8FB4A0; --accent-ink:#121512; --chip:#2A302A; --focus:#8FB4A0; color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.55;
+  padding:0 max(16px,env(safe-area-inset-right,0px)) 64px max(16px,env(safe-area-inset-left,0px))}
+.wrap{max-width:640px;margin:0 auto}
+header{padding-block:40px 28px;border-bottom:1px solid var(--line)}
+.brand{font-family:var(--display);font-size:22px;letter-spacing:.32em;text-transform:uppercase}
+.brand small{display:block;font-family:var(--body);font-size:11px;letter-spacing:.24em;color:var(--muted);margin-top:2px}
+h1{font-family:var(--display);font-weight:400;font-size:clamp(34px,8vw,48px);line-height:1.05;margin:28px 0 14px;text-wrap:balance}
+.intro{color:var(--muted);max-width:60ch;margin:0}
+.meta{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:18px;font-size:13px;color:var(--muted)}
+.progress{position:sticky;top:0;z-index:5;background:var(--bg);padding-block:12px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px;font-size:12px;color:var(--muted);letter-spacing:.06em}
+.bar{flex:1;height:3px;background:var(--line);border-radius:2px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .3s}
+section{padding-block:36px 8px;border-bottom:1px solid var(--line)}
+.sec-head{display:flex;gap:14px;align-items:baseline;margin-bottom:6px}
+.sec-num{font-size:12px;letter-spacing:.14em;color:var(--accent);font-weight:600;font-variant-numeric:tabular-nums}
+h2{font-family:var(--display);font-weight:400;font-size:28px;margin:0;line-height:1.15}
+.sec-note{color:var(--muted);font-size:14px;margin:0 0 20px}
+.q{display:flex;flex-direction:column;gap:8px;margin-bottom:26px}
+.q label.t,.q .t{font-weight:500;font-size:15px}
+.q .h{font-size:13px;color:var(--muted);margin-top:-4px}
+.req{color:var(--accent)}
+input[type=text],input[type=tel],input[type=email],textarea{width:100%;font:inherit;font-size:16px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:11px 12px}
+textarea{min-height:88px;resize:vertical}
+input:focus,textarea:focus{outline:2px solid var(--focus);outline-offset:1px;border-color:transparent}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{position:relative}
+.chip input{position:absolute;opacity:0;inset:0;margin:0;cursor:pointer}
+.chip span{display:inline-block;padding:8px 14px;border:1px solid var(--line);border-radius:999px;background:var(--surface);font-size:14px;transition:background .15s,border-color .15s}
+.chip input:checked+span{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.chip input:focus-visible+span{outline:2px solid var(--focus);outline-offset:2px}
+.finish{padding-block:36px 0}
+.btns{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}
+.btn{font:inherit;font-weight:600;font-size:15px;padding:13px 20px;border-radius:4px;border:1px solid var(--accent);cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}
+.btn.p{background:var(--accent);color:var(--accent-ink)}
+.btn.s{background:transparent;color:var(--accent)}
+.btn:disabled{opacity:.6;cursor:wait}
+.btn:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.consent{display:flex;gap:10px;align-items:flex-start;margin-top:18px;font-size:14px;color:var(--muted);cursor:pointer}
+.consent input{margin-top:4px;width:18px;height:18px;accent-color:var(--accent);flex:none}
+.msg{font-size:14px;margin-top:12px;min-height:1.4em;color:var(--accent)}
+.err{color:#B4442E}
+#done{padding-block:56px}
+footer{margin-top:40px;font-size:12px;color:var(--muted);letter-spacing:.04em}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">Sencia<small>ESTUDIO DE DISEÑO INTERIOR</small></div>
+    <h1>Briefing para tu proyecto comercial</h1>
+    <p class="intro">Antes de diseñar queremos entender tu negocio, tu cliente y el espacio. Responde con calma y con tus propias palabras: no hay respuestas correctas, y si algo no lo sabes todavía, déjalo en blanco.</p>
+    <div class="meta"><span>8 secciones</span><span>15 a 20 minutos</span><span>Tus respuestas se guardan en este dispositivo mientras escribes</span></div>
+  </header>
+
+  <div id="formArea">
+    <div class="progress" aria-live="polite"><div class="bar"><i id="barfill"></i></div><span id="ptext">0%</span></div>
+    <form id="f" novalidate></form>
+    <input type="text" id="web" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px;opacity:0;height:0;width:0">
+    <div class="finish">
+      <h2>Enviar a Sencia Estudio</h2>
+      <p class="sec-note">Al enviar, tus respuestas quedan guardadas y el estudio las recibe de inmediato.</p>
+      <label class="consent"><input type="checkbox" id="acepto"><span>Autorizo a Sencia Estudio a tratar mis datos personales para preparar la propuesta de diseño y contactarme, conforme a la Ley 1581 de 2012. Puedo pedir que consulten, corrijan o eliminen mis datos cuando quiera. <span class="req">*</span></span></label>
+      <div class="btns">
+        <button class="btn p" type="button" id="send">Enviar briefing</button>
+      </div>
+      <div class="msg" id="msg" role="status"></div>
+    </div>
+  </div>
+
+  <div id="done" hidden>
+    <h2>¡Gracias! Recibimos tu briefing</h2>
+    <p class="sec-note">Sencia Estudio revisará tus respuestas y se pondrá en contacto contigo pronto.</p>
+    <div class="btns">
+      <a class="btn p" id="wa" href="#" target="_blank" rel="noopener" hidden>Avisar por WhatsApp</a>
+    </div>
+  </div>
+
+  <footer>Sencia Estudio · Pasto, Nariño · Tu información solo se usa para preparar tu propuesta de diseño.</footer>
+</div>
+
+<script src="/questions.js"></script>
+<script>
+const KEY="sencia-briefing-comercial-v1";
+const f=document.getElementById("f");
+const msg=document.getElementById("msg");
+const esc=s=>s.replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+let html="";
+S.forEach((s,i)=>{
+  html+=`<section><div class="sec-head"><span class="sec-num">${String(i+1).padStart(2,"0")}</span><h2>${s.t}</h2></div><p class="sec-note">${s.n||""}</p>`;
+  s.q.forEach(q=>{
+    const lab=`${esc(q.l)}${q.req?' <span class="req">*</span>':''}`;
+    const hint=q.h?`<span class="h">${esc(q.h)}</span>`:"";
+    if(q.type==="multi"||q.type==="one"){
+      const t=q.type==="multi"?"checkbox":"radio";
+      html+=`<fieldset class="q" style="border:0;padding:0;margin:0 0 26px"><legend class="t" style="padding:0;margin-bottom:8px">${lab}</legend>${hint}<div class="chips">${q.o.map((o,k)=>`<label class="chip"><input type="${t}" name="${q.id}" id="${q.id}-${k}" value="${esc(o)}"><span>${esc(o)}</span></label>`).join("")}</div></fieldset>`;
+    } else if(q.type==="area"){
+      html+=`<div class="q"><label class="t" for="${q.id}">${lab}</label>${hint}<textarea id="${q.id}" name="${q.id}"></textarea></div>`;
+    } else {
+      html+=`<div class="q"><label class="t" for="${q.id}">${lab}</label>${hint}<input type="${q.type}" id="${q.id}" name="${q.id}"></div>`;
+    }
+  });
+  html+=`</section>`;
+});
+f.innerHTML=html;
+
+const all=S.flatMap(s=>s.q);
+function val(q){
+  if(q.type==="multi"||q.type==="one") return [...f.querySelectorAll(`input[name="${q.id}"]:checked`)].map(x=>x.value).join(", ");
+  return (f.elements[q.id].value||"").trim();
+}
+function save(){
+  const d={};all.forEach(q=>{d[q.id]=val(q)});
+  try{localStorage.setItem(KEY,JSON.stringify(d))}catch(e){}
+  return d;
+}
+function load(){
+  let d=null;try{d=JSON.parse(localStorage.getItem(KEY)||"null")}catch(e){}
+  if(!d)return;
+  all.forEach(q=>{
+    const v=d[q.id];if(!v)return;
+    if(q.type==="multi"||q.type==="one"){const parts=v.split(", ");f.querySelectorAll(`input[name="${q.id}"]`).forEach(x=>{x.checked=parts.includes(x.value)})}
+    else f.elements[q.id].value=v;
+  });
+}
+function progress(){
+  const n=all.filter(q=>val(q)).length,p=Math.round(n/all.length*100);
+  document.getElementById("barfill").style.width=p+"%";
+  document.getElementById("ptext").textContent=p+"%";
+}
+function check(){
+  const miss=all.filter(q=>q.req&&!val(q));
+  if(miss.length){msg.className="msg err";msg.textContent="Falta: "+miss.map(q=>q.l.toLowerCase()).join(", ")+".";f.elements[miss[0].id].focus();return false}
+  if(!document.getElementById("acepto").checked){msg.className="msg err";msg.textContent="Debes aceptar el tratamiento de datos personales para enviar.";document.getElementById("acepto").focus();return false}
+  return true;
+}
+f.addEventListener("input",()=>{save();progress()});
+f.addEventListener("submit",e=>e.preventDefault());
+
+document.getElementById("send").addEventListener("click",async e=>{
+  if(!check())return;
+  const btn=e.currentTarget;
+  btn.disabled=true;msg.className="msg";msg.textContent="Enviando…";
+  try{
+    const r=await fetch("/api/respuestas",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...save(),acepto:true,web:document.getElementById("web").value})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(j.error||"No se pudo enviar");
+    try{localStorage.removeItem(KEY)}catch(_){}
+    await mostrarGracias(j.id);
+  }catch(err){
+    msg.className="msg err";msg.textContent=(err.message||"Error")+". Intenta de nuevo.";
+    btn.disabled=false;
+  }
+});
+
+async function mostrarGracias(id){
+  document.getElementById("formArea").hidden=true;
+  document.getElementById("done").hidden=false;
+  window.scrollTo(0,0);
+  try{
+    const c=await (await fetch("/api/config")).json();
+    if(c.whatsapp){
+      const marca=document.getElementById("marca").value.trim();
+      const texto=`Hola, acabo de enviar el briefing de ${marca||"mi negocio"} (ref. #${id}). Quedo atento.`;
+      const a=document.getElementById("wa");
+      a.href=`https://wa.me/${c.whatsapp}?text=${encodeURIComponent(texto)}`;
+      a.hidden=false;
+    }
+  }catch(_){}
+}
+
+load();progress();
+</script>
+</body>
+</html>
