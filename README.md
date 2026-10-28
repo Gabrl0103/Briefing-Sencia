@@ -1,36 +1,36 @@
 # Briefing Sencia
 
-Formulario del briefing + guardado de respuestas en Postgres + panel `/admin`.
+Formulario del briefing + guardado de respuestas en Postgres + panel privado + avisos automáticos por correo y WhatsApp.
 
 ## Variables de entorno
 
 | Variable | Qué es |
 |---|---|
-| `DATABASE_URL` | La pone Railway sola al enlazar Postgres |
-| `ADMIN_PASSWORD` | Clave para entrar a `/admin` (usuario: lo que quieras). **Mínimo 12 caracteres**, si no el panel no abre |
-| `WHATSAPP_NUMBER` | (opcional) Número de Manuela con indicativo, sin + ni espacios. Ej: `573001234567` |
+| `DATABASE_URL` | Conexión a Postgres (Neon). Sin `channel_binding=require` |
+| `PGSSL` | `true` cuando la base es Neon |
+| `ADMIN_TOKEN` | Parte secreta del link del panel. 24+ letras o números, sin símbolos ni espacios |
+| `NOTIFY_EMAIL` | Correo(s) que reciben cada briefing, separados por coma |
+| `RESEND_API_KEY` | Clave de Resend para enviar el correo |
+| `EMAIL_FROM` | (opcional) Remitente. Por defecto `Briefing Sencia <onboarding@resend.dev>` |
+| `WHATSAPP_NUMBER` | Número de Manuela con indicativo, sin + ni espacios (ej. `573001234567`) |
+| `CALLMEBOT_APIKEY` | Clave de CallMeBot para el aviso automático por WhatsApp |
+| `PUBLIC_URL` | (opcional en Render) Dirección pública, ej. `https://briefing.onrender.com` |
 
-## Subir a Railway
+Todo lo de correo y WhatsApp es opcional: si falta, simplemente no se envía ese aviso y las respuestas se guardan igual.
 
-1. Sube esta carpeta a un repo nuevo en GitHub.
-2. En Railway: **New Project → Deploy from GitHub repo** y elige el repo.
-3. En el mismo proyecto: **New → Database → Add PostgreSQL**.
-4. En el servicio de la app → **Variables**:
-   - `DATABASE_URL` = `${{Postgres.DATABASE_URL}}` (referencia al Postgres)
-   - `ADMIN_PASSWORD` = tu clave
-   - `WHATSAPP_NUMBER` = número de Manuela
-5. En el servicio de la app → **Settings → Networking → Generate Domain**.
-6. Abre el dominio: ahí está el formulario. El panel está en `/admin`.
+## Panel privado
+
+Se abre en `https://TU-DOMINIO/panel/ADMIN_TOKEN` (no hay contraseña: el acceso es el link, guárdalo como favorito y no lo compartas). Desde ahí se ven los briefings, se buscan, se filtran por estado, se exportan a CSV y se imprimen como PDF.
+
+## Cómo funciona
+
+- `public/questions.js`: todas las preguntas. Si cambias una, cambia en el formulario, el panel y el correo.
+- `public/index.html`: el formulario.
+- `server.js`: guarda las respuestas (`POST /api/respuestas`), sirve el panel y manda los avisos.
 
 ## Probar en local
 
 ```
 npm install
-DATABASE_URL=postgres://usuario:clave@localhost:5432/briefing ADMIN_PASSWORD=1234 npm start
+DATABASE_URL=postgres://usuario:clave@localhost:5432/briefing ADMIN_TOKEN=unaclavemuylargade24letras npm start
 ```
-
-## Cómo funciona
-
-- `public/questions.js`: todas las preguntas. Si cambias una, cambia en el formulario y en el admin.
-- `public/index.html`: el formulario. Al enviar guarda en la base y muestra el botón de WhatsApp (aviso corto con el número de referencia).
-- `server.js`: guarda las respuestas (`POST /api/respuestas`) y sirve el panel `/admin`, la ficha de cada briefing y el CSV.

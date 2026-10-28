@@ -7,7 +7,7 @@ const S = require("./public/questions.js");
 const all = S.flatMap(s => s.q);
 const ESTADOS = ["Nuevo", "Contactado", "Propuesta enviada", "Cerrado", "Descartado"];
 const app = express();
-app.set("trust proxy", 1); // Railway va detrás de un proxy
+app.set("trust proxy", 1); // detrás del proxy del hosting
 app.use(express.json({ limit: "200kb" }));
 app.use(express.urlencoded({ extended: false }));
 app.use(express.static(path.join(__dirname, "public")));
@@ -30,30 +30,9 @@ async function initDb() {
 // ---------- utilidades ----------
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fecha = d => new Date(d).toLocaleString("es-CO", { timeZone: "America/Bogota", dateStyle: "medium", timeStyle: "short" });
-
-// Admin: clave larga + máximo 10 intentos fallidos cada 15 minutos por IP
-const fallos = new Map();
-function auth(req, res, next) {
-  const pass = process.env.ADMIN_PASSWORD;
-  if (!pass || pass.length < 12) return res.status(500).send("Configura ADMIN_PASSWORD con al menos 12 caracteres.");
-  const ahora = Date.now(), ventana = 15 * 60 * 1000;
-  const lista = (fallos.get(req.ip) || []).filter(t => ahora - t < ventana);
-  if (lista.length >= 10) return res.status(429).send("Demasiados intentos fallidos. Espera 15 minutos.");
-  const h = req.headers.authorization || "";
-  const given = Buffer.from(h.split(" ")[1] || "", "base64").toString().split(":").slice(1).join(":");
-  const a = crypto.createHash("sha256").update(given).digest();
-  const b = crypto.createHash("sha256").update(pass).digest();
-  if (crypto.timingSafeEqual(a, b)) return next();
-  if (h) { lista.push(ahora); fallos.set(req.ip, lista); }
-  res.set("WWW-Authenticate", 'Basic realm="Sencia admin"').status(401).send("Acceso restringido");
-}
-
-// Los POST del admin solo se aceptan desde esta misma página (evita que otro sitio los dispare)
-function mismoOrigen(req, res, next) {
-  const o = req.headers.origin;
-  if (o && new URL(o).host !== req.headers.host) return res.status(403).send("Origen no permitido");
-  next();
-}
+const sha = s => crypto.createHash("sha256").update(String(s)).digest();
+const tokenValido = t => /^[A-Za-z0-9_-]{24,}$/.test(t || "");
+const urlPublica = () => (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || "").replace(/\/+$/, "");
 
 const css = `
 :root{--bg:#EFF0EC;--surface:#FAFAF7;--ink:#20251F;--muted:#626A60;--line:#D3D6CE;--accent:#3E5A4C;--accent-ink:#F4F6F1;
@@ -85,20 +64,79 @@ dd.vacio{color:var(--muted)}
 @media print{body{background:#fff;padding:0}.acciones,.noprint{display:none}}
 `;
 
-function page(titulo, cuerpo) {
+function page(titulo, cuerpo, base) {
   return `<!doctype html><html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(titulo)}</title>
+<meta name="robots" content="noindex,nofollow"><meta name="referrer" content="no-referrer">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Italiana&family=Figtree:wght@400;500;600&display=swap">
 <style>${css}</style></head><body><div class="wrap">
-<header><a class="brand" href="/admin">Sencia</a><span class="muted noprint">Panel de briefings</span></header>
+<header><a class="brand" href="${esc(base)}">Sencia</a><span class="muted noprint">Panel de briefings</span></header>
 ${cuerpo}</div></body></html>`;
 }
 
 const tag = e => `<span class="tag${e === "Nuevo" ? " n" : ""}">${esc(e)}</span>`;
 
+// ---------- Avisos automáticos (correo y WhatsApp) ----------
+function correoHtml(id, datos, link) {
+  const secciones = S.map((s, i) => {
+    const filas = s.q.map(q => {
+      const v = (datos[q.id] || "").trim();
+      return `<tr><td style="padding:6px 12px 6px 0;color:#626A60;vertical-align:top;width:40%">${esc(q.l)}</td>
+        <td style="padding:6px 0;white-space:pre-wrap">${v ? esc(v) : "—"}</td></tr>`;
+    }).join("");
+    return `<h3 style="font-family:Georgia,serif;font-weight:400;border-bottom:1px solid #D3D6CE;padding-bottom:6px;margin:28px 0 8px">
+      ${String(i + 1).padStart(2, "0")} · ${esc(s.t)}</h3>
+      <table style="width:100%;border-collapse:collapse;font-size:14px">${filas}</table>`;
+  }).join("");
+  return `<div style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;color:#20251F;line-height:1.5">
+    <p style="letter-spacing:.3em;text-transform:uppercase;font-size:13px;margin:0">Sencia · Briefing comercial</p>
+    <h2 style="font-family:Georgia,serif;font-weight:400;font-size:28px;margin:12px 0 4px">${esc(datos.marca)}</h2>
+    <p style="color:#626A60;margin:0 0 16px">Briefing #${id} · ${esc(datos.nombre)} · ${esc(datos.tel)}</p>
+    ${link ? `<p><a href="${esc(link)}" style="display:inline-block;background:#3E5A4C;color:#F4F6F1;padding:10px 16px;border-radius:4px;text-decoration:none;font-weight:600">Abrir en el panel</a></p>` : ""}
+    ${secciones}</div>`;
+}
+
+async function enviarCorreo(id, datos, link) {
+  const key = process.env.RESEND_API_KEY, para = process.env.NOTIFY_EMAIL;
+  if (!key || !para) return;
+  const r = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      from: process.env.EMAIL_FROM || "Briefing Sencia <onboarding@resend.dev>",
+      to: para.split(",").map(s => s.trim()).filter(Boolean),
+      subject: `Nuevo briefing: ${datos.marca} (#${id})`,
+      html: correoHtml(id, datos, link),
+    }),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!r.ok) console.error("Resend falló:", r.status, await r.text());
+}
+
+// WhatsApp vía CallMeBot. Mensaje corto a propósito: sin teléfono del cliente ni link del panel.
+async function enviarWhatsapp(id, datos) {
+  const key = process.env.CALLMEBOT_APIKEY;
+  const num = (process.env.WHATSAPP_NUMBER || "").replace(/\D/g, "");
+  if (!key || !num) return;
+  const texto = `Nuevo briefing #${id}: ${datos.marca} (${datos.nombre}). Revisa tu correo o tu panel para ver las respuestas.`;
+  const url = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent("+" + num)}&text=${encodeURIComponent(texto)}&apikey=${encodeURIComponent(key)}`;
+  const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
+  if (!r.ok) console.error("CallMeBot falló:", r.status, await r.text());
+}
+
+async function notificar(id, datos) {
+  const base = urlPublica();
+  const t = process.env.ADMIN_TOKEN;
+  const link = base && tokenValido(t) ? `${base}/panel/${t}/${id}` : "";
+  const res = await Promise.allSettled([enviarCorreo(id, datos, link), enviarWhatsapp(id, datos)]);
+  res.forEach(x => { if (x.status === "rejected") console.error("Aviso falló:", x.reason && x.reason.message); });
+}
+
 // ---------- API pública ----------
 app.get("/api/config", (req, res) => {
-  res.json({ whatsapp: (process.env.WHATSAPP_NUMBER || "").replace(/\D/g, "") });
+  // El botón manual de WhatsApp del formulario solo aparece si no hay aviso automático
+  const manual = process.env.CALLMEBOT_APIKEY ? "" : (process.env.WHATSAPP_NUMBER || "").replace(/\D/g, "");
+  res.json({ whatsapp: manual });
 });
 
 // Límite de envíos por IP (en memoria): máximo 10 por hora
@@ -114,7 +152,6 @@ function limite(req, res, next) {
 setInterval(() => {
   const ahora = Date.now();
   for (const [ip, l] of envios) if (!l.some(t => ahora - t < 60 * 60 * 1000)) envios.delete(ip);
-  for (const [ip, l] of fallos) if (!l.some(t => ahora - t < 15 * 60 * 1000)) fallos.delete(ip);
 }, 10 * 60 * 1000).unref();
 
 app.post("/api/respuestas", limite, async (req, res) => {
@@ -131,16 +168,29 @@ app.post("/api/respuestas", limite, async (req, res) => {
     if (falta.length) return res.status(400).json({ error: "Falta: " + falta.map(q => q.l.toLowerCase()).join(", ") });
     datos.acepto_datos = true; // la fecha de aceptación es la fecha de la respuesta (columna creado)
     const r = await pool.query("INSERT INTO respuestas (datos) VALUES ($1) RETURNING id", [datos]);
-    res.json({ id: r.rows[0].id });
+    const id = r.rows[0].id;
+    res.json({ id });
+    notificar(id, datos).catch(e => console.error("Aviso falló:", e.message)); // no frena la respuesta al cliente
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Error del servidor" });
   }
 });
 
-// ---------- Admin ----------
-app.get("/admin", auth, async (req, res) => {
+// ---------- Panel privado: /panel/<ADMIN_TOKEN> ----------
+// No hay contraseña que escribir: el acceso es el link secreto. Quien no tenga el link recibe "No encontrado".
+const panel = express.Router();
+app.use("/panel/:token", (req, res, next) => {
+  const t = process.env.ADMIN_TOKEN;
+  if (!tokenValido(t)) return res.status(500).send("Configura ADMIN_TOKEN: mínimo 24 letras o números, sin espacios ni símbolos.");
+  if (!crypto.timingSafeEqual(sha(req.params.token), sha(t))) return res.status(404).send("No encontrado");
+  res.set({ "X-Robots-Tag": "noindex, nofollow", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" });
+  next();
+}, panel);
+
+panel.get("/", async (req, res) => {
   try {
+    const base = req.baseUrl;
     const POR_PAGINA = 25;
     const q = String(req.query.q || "").trim().slice(0, 100);
     const estado = ESTADOS.includes(req.query.estado) ? req.query.estado : "";
@@ -158,30 +208,30 @@ app.get("/admin", auth, async (req, res) => {
       `SELECT id, creado, estado, datos FROM respuestas ${donde} ORDER BY id DESC LIMIT ${POR_PAGINA} OFFSET ${(pagina - 1) * POR_PAGINA}`, args);
     const filas = r.rows.map(x => `<tr>
       <td>#${x.id}</td><td>${esc(fecha(x.creado))}</td>
-      <td><a href="/admin/${x.id}">${esc(x.datos.marca || "—")}</a></td>
+      <td><a href="${esc(base)}/${x.id}">${esc(x.datos.marca || "—")}</a></td>
       <td>${esc(x.datos.nombre)}<br><span class="muted">${esc(x.datos.tel)}</span></td>
       <td>${esc(x.datos.presupuesto || "—")}</td><td>${tag(x.estado)}</td></tr>`).join("");
-    const enlace = n => `/admin?page=${n}${q ? "&q=" + encodeURIComponent(q) : ""}${estado ? "&estado=" + encodeURIComponent(estado) : ""}`;
+    const enlace = n => `${base}?page=${n}${q ? "&q=" + encodeURIComponent(q) : ""}${estado ? "&estado=" + encodeURIComponent(estado) : ""}`;
     const nav = paginas > 1 ? `<p class="muted">Página ${pagina} de ${paginas} ·
-      ${pagina > 1 ? `<a href="${enlace(pagina - 1)}">← Anterior</a>` : ""}
-      ${pagina < paginas ? `<a href="${enlace(pagina + 1)}">Siguiente →</a>` : ""}</p>` : "";
+      ${pagina > 1 ? `<a href="${esc(enlace(pagina - 1))}">← Anterior</a>` : ""}
+      ${pagina < paginas ? `<a href="${esc(enlace(pagina + 1))}">Siguiente →</a>` : ""}</p>` : "";
     res.send(page("Briefings", `
       <h1>Briefings recibidos</h1>
-      <form method="get" action="/admin" class="acciones">
+      <form method="get" action="${esc(base)}" class="acciones">
         <input class="campo" name="q" value="${esc(q)}" placeholder="Buscar por negocio, nombre o correo" style="flex:1;min-width:200px">
         <select class="campo" name="estado"><option value="">Todos los estados</option>
           ${ESTADOS.map(e => `<option${e === estado ? " selected" : ""}>${esc(e)}</option>`).join("")}</select>
         <button class="btn" type="submit">Filtrar</button>
-        <a class="btn s" href="/admin/export.csv">Descargar CSV</a>
+        <a class="btn s" href="${esc(base)}/export.csv">Descargar CSV</a>
       </form>
       <p class="muted">${total} ${q || estado ? "resultado(s)" : "en total"}</p>
       <table><tr><th>Ref.</th><th>Fecha</th><th>Negocio</th><th>Contacto</th><th>Inversión</th><th>Estado</th></tr>
       ${filas || '<tr><td colspan="6" class="muted">No hay respuestas.</td></tr>'}</table>
-      ${nav}`));
+      ${nav}`, base));
   } catch (e) { console.error(e); res.status(500).send("Error del servidor"); }
 });
 
-app.get("/admin/export.csv", auth, async (req, res) => {
+panel.get("/export.csv", async (req, res) => {
   try {
     const r = await pool.query("SELECT id, creado, estado, datos FROM respuestas ORDER BY id");
     const cel = v => '"' + String(v ?? "").replace(/"/g, '""') + '"';
@@ -193,8 +243,9 @@ app.get("/admin/export.csv", auth, async (req, res) => {
   } catch (e) { console.error(e); res.status(500).send("Error del servidor"); }
 });
 
-app.get("/admin/:id", auth, async (req, res) => {
+panel.get("/:id", async (req, res) => {
   try {
+    const base = req.baseUrl;
     const id = parseInt(req.params.id, 10);
     if (!id) return res.status(404).send("No encontrado");
     const r = await pool.query("SELECT id, creado, estado, datos FROM respuestas WHERE id=$1", [id]);
@@ -209,31 +260,32 @@ app.get("/admin/:id", auth, async (req, res) => {
     res.send(page(`Briefing ${datos.marca || id}`, `
       <h1>${esc(datos.marca || "Briefing")}</h1>
       <p class="muted">Briefing comercial #${id} · ${esc(fecha(creado))} · ${esc(datos.nombre)} · ${tag(estado)}</p>
-      <form method="post" action="/admin/${id}/estado" class="acciones">
-        <a class="btn s" href="/admin">← Volver</a>
+      <form method="post" action="${esc(base)}/${id}/estado" class="acciones">
+        <a class="btn s" href="${esc(base)}">← Volver</a>
         <select class="campo" name="estado" aria-label="Estado">
           ${ESTADOS.map(e => `<option${e === estado ? " selected" : ""}>${esc(e)}</option>`).join("")}</select>
         <button class="btn" type="submit">Guardar estado</button>
         <button class="btn s" type="button" onclick="window.print()">Imprimir / guardar PDF</button>
       </form>
-      ${secciones}`));
+      ${secciones}`, base));
   } catch (e) { console.error(e); res.status(500).send("Error del servidor"); }
 });
 
-app.post("/admin/:id/estado", auth, mismoOrigen, async (req, res) => {
+panel.post("/:id/estado", async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     const estado = req.body && req.body.estado;
     if (!id || !ESTADOS.includes(estado)) return res.status(400).send("Datos no válidos");
     const r = await pool.query("UPDATE respuestas SET estado=$1 WHERE id=$2", [estado, id]);
     if (!r.rowCount) return res.status(404).send("No encontrado");
-    res.redirect(303, "/admin/" + id);
+    res.redirect(303, `${req.baseUrl}/${id}`);
   } catch (e) { console.error(e); res.status(500).send("Error del servidor"); }
 });
 
 // ---------- Arranque ----------
 if (require.main === module) {
   const port = process.env.PORT || 3000;
+  if (!tokenValido(process.env.ADMIN_TOKEN)) console.warn("AVISO: falta ADMIN_TOKEN válido; el panel no abrirá.");
   initDb()
     .then(() => app.listen(port, () => console.log("Briefing en puerto " + port)))
     .catch(e => { console.error("No se pudo conectar a la base de datos:", e.message); process.exit(1); });
