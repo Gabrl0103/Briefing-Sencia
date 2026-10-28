@@ -2,6 +2,7 @@ const express = require("express");
 const crypto = require("crypto");
 const path = require("path");
 const { Pool } = require("pg");
+const PDFDocument = require("pdfkit");
 const S = require("./public/questions.js");
 
 const all = S.flatMap(s => s.q);
@@ -75,6 +76,68 @@ ${cuerpo}</div></body></html>`;
 }
 
 const tag = e => `<span class="tag${e === "Nuevo" ? " n" : ""}">${esc(e)}</span>`;
+
+// ---------- Exportar un briefing (CSV y PDF) ----------
+const celda = v => '"' + String(v ?? "").replace(/"/g, '""') + '"';
+
+function nombreArchivo(datos, id, ext) {
+  const slug = String(datos.marca || "briefing").normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "briefing";
+  return `briefing-${slug}-${id}.${ext}`;
+}
+
+function csvUno(id, creado, estado, datos) {
+  const filas = [["Sección", "Pregunta", "Respuesta"],
+    ["Registro", "Ref.", "#" + id], ["Registro", "Fecha", fecha(creado)], ["Registro", "Estado", estado]];
+  S.forEach(s => s.q.forEach(q => filas.push([s.t, q.l, (datos[q.id] || "").trim()])));
+  return "﻿" + filas.map(f => f.map(celda).join(",")).join("\r\n");
+}
+
+// El PDF usa fuentes estándar: se quitan los caracteres que no soportan (emojis, etc.)
+const pdfOk = s => String(s ?? "").replace(/[  ]/g, " ").replace(/\r/g, "")
+  .replace(/[^\n -~ -ÿ–—‘’“”•…€]/g, "");
+
+function crearPdf(id, creado, estado, datos) {
+  const ACC = "#3E5A4C", MUT = "#626A60", INK = "#20251F", LINE = "#D3D6CE";
+  const M = 56;
+  const doc = new PDFDocument({
+    size: "A4", bufferPages: true,
+    margins: { top: M, bottom: 64, left: M, right: M },
+    info: { Title: pdfOk(`Briefing ${datos.marca || id}`), Author: "Sencia Estudio" },
+  });
+  doc.font("Helvetica").fontSize(9).fillColor(ACC).text("SENCIA · ESTUDIO DE DISEÑO INTERIOR", { characterSpacing: 2 });
+  doc.moveDown(1.2).font("Times-Roman").fontSize(26).fillColor(INK).text(pdfOk(datos.marca || "Briefing"));
+  doc.moveDown(0.3).font("Helvetica").fontSize(10).fillColor(MUT)
+    .text(pdfOk(`Briefing comercial #${id} · ${fecha(creado)} · ${datos.nombre || ""} · Estado: ${estado}`));
+  S.forEach((s, i) => {
+    if (doc.y > doc.page.height - 160) doc.addPage();
+    doc.moveDown(1.6).font("Times-Roman").fontSize(16).fillColor(INK).text(`${String(i + 1).padStart(2, "0")}   ${pdfOk(s.t)}`);
+    const y = doc.y + 3;
+    doc.moveTo(M, y).lineTo(doc.page.width - M, y).lineWidth(0.7).strokeColor(LINE).stroke();
+    doc.moveDown(0.7);
+    s.q.forEach(q => {
+      const v = (datos[q.id] || "").trim();
+      if (doc.y > doc.page.height - 110) doc.addPage();
+      doc.font("Helvetica").fontSize(8.5).fillColor(MUT).text(pdfOk(q.l));
+      doc.font("Helvetica").fontSize(11).fillColor(v ? INK : MUT).text(v ? pdfOk(v) : "—");
+      doc.moveDown(0.6);
+    });
+  });
+  const rango = doc.bufferedPageRange();
+  for (let i = 0; i < rango.count; i++) {
+    doc.switchToPage(i);
+    doc.page.margins.bottom = 0; // para poder escribir el pie sin que cree otra página
+    doc.font("Helvetica").fontSize(8).fillColor(MUT).text(
+      `Sencia Estudio · Briefing #${id} · Página ${i + 1} de ${rango.count}`,
+      M, doc.page.height - 40, { align: "center", width: doc.page.width - 2 * M, lineBreak: false });
+  }
+  return doc;
+}
+
+async function cargarBriefing(id) {
+  const r = await pool.query("SELECT id, creado, estado, datos FROM respuestas WHERE id=$1", [id]);
+  return r.rows[0] || null;
+}
 
 // ---------- Avisos automáticos (correo y WhatsApp) ----------
 function correoHtml(id, datos, link) {
@@ -243,6 +306,30 @@ panel.get("/export.csv", async (req, res) => {
   } catch (e) { console.error(e); res.status(500).send("Error del servidor"); }
 });
 
+panel.get("/:id/export.csv", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const b = id && await cargarBriefing(id);
+    if (!b) return res.status(404).send("No encontrado");
+    res.set("Content-Type", "text/csv; charset=utf-8");
+    res.set("Content-Disposition", `attachment; filename="${nombreArchivo(b.datos, id, "csv")}"`);
+    res.send(csvUno(id, b.creado, b.estado, b.datos));
+  } catch (e) { console.error(e); res.status(500).send("Error del servidor"); }
+});
+
+panel.get("/:id/export.pdf", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const b = id && await cargarBriefing(id);
+    if (!b) return res.status(404).send("No encontrado");
+    const doc = crearPdf(id, b.creado, b.estado, b.datos);
+    res.set("Content-Type", "application/pdf");
+    res.set("Content-Disposition", `attachment; filename="${nombreArchivo(b.datos, id, "pdf")}"`);
+    doc.pipe(res);
+    doc.end();
+  } catch (e) { console.error(e); if (!res.headersSent) res.status(500).send("Error del servidor"); }
+});
+
 panel.get("/:id", async (req, res) => {
   try {
     const base = req.baseUrl;
@@ -265,7 +352,8 @@ panel.get("/:id", async (req, res) => {
         <select class="campo" name="estado" aria-label="Estado">
           ${ESTADOS.map(e => `<option${e === estado ? " selected" : ""}>${esc(e)}</option>`).join("")}</select>
         <button class="btn" type="submit">Guardar estado</button>
-        <button class="btn s" type="button" onclick="window.print()">Imprimir / guardar PDF</button>
+        <a class="btn s" href="${esc(base)}/${id}/export.pdf">Descargar PDF</a>
+        <a class="btn s" href="${esc(base)}/${id}/export.csv">Descargar CSV</a>
       </form>
       ${secciones}`, base));
   } catch (e) { console.error(e); res.status(500).send("Error del servidor"); }

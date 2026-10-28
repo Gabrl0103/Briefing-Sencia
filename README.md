@@ -20,7 +20,7 @@ Todo lo de correo y WhatsApp es opcional: si falta, simplemente no se envía ese
 
 ## Panel privado
 
-Se abre en `https://TU-DOMINIO/panel/ADMIN_TOKEN` (no hay contraseña: el acceso es el link, guárdalo como favorito y no lo compartas). Desde ahí se ven los briefings, se buscan, se filtran por estado, se exportan a CSV y se imprimen como PDF.
+Se abre en `https://TU-DOMINIO/panel/ADMIN_TOKEN` (no hay contraseña: el acceso es el link, guárdalo como favorito y no lo compartas). Desde ahí se ven los briefings, se buscan, se filtran por estado y se exportan: todos juntos en CSV, o cada briefing por separado en PDF y CSV (botones en la ficha).
 
 ## Cómo funciona
 
