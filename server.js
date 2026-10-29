@@ -1,11 +1,35 @@
 const express = require("express");
 const crypto = require("crypto");
+const fs = require("fs");
 const path = require("path");
 const { Pool } = require("pg");
 const PDFDocument = require("pdfkit");
-const S = require("./public/questions.js");
 
-const all = S.flatMap(s => s.q);
+// ---------- Tipos de briefing ----------
+// Para agregar otro tipo: crear public/questions-<tipo>.js y sumarlo aquí.
+const TIPOS = {
+  comercial: {
+    slug: "comercial", etiqueta: "Comercial", color: "#3E5A4C",
+    archivo: "questions-comercial.js", S: require("./public/questions-comercial.js"),
+    titulo: "Briefing Comercial Sencia", h1: "Briefing para tu proyecto comercial",
+    intro: "Antes de diseñar queremos entender tu negocio, tu cliente y el espacio. Responde con calma y con tus propias palabras: no hay respuestas correctas, y si algo no lo sabes todavía, déjalo en blanco.",
+    duracion: "15 a 20 minutos",
+    tituloDe: d => d.marca || d.nombre || "",
+    subDe: d => d.nombre || d.correo || "",
+  },
+  hogar: {
+    slug: "hogar", etiqueta: "Hogar", color: "#9A5B34",
+    archivo: "questions-hogar.js", S: require("./public/questions-hogar.js"),
+    titulo: "Briefing Hogar Sencia", h1: "Briefing para tu hogar",
+    intro: "Un buen diseño empieza por conocer a quienes van a vivir el espacio: sus rutinas, sus gustos y lo que hoy no les funciona. Responde con calma y con tus propias palabras. Si algo no lo sabes todavía, déjalo en blanco.",
+    duracion: "20 a 25 minutos",
+    tituloDe: d => d.nombre || "",
+    subDe: d => d.correo || d.ciudad || "",
+  },
+};
+Object.values(TIPOS).forEach(t => { t.all = t.S.flatMap(s => s.q); });
+const tipoDe = clave => TIPOS[clave] || TIPOS.comercial;
+
 const ESTADOS = ["Nuevo", "Contactado", "Propuesta enviada", "Cerrado", "Descartado"];
 const app = express();
 app.set("trust proxy", 1); // detrás del proxy del hosting
@@ -26,6 +50,7 @@ async function initDb() {
       datos JSONB NOT NULL
     )`);
   await pool.query("ALTER TABLE respuestas ADD COLUMN IF NOT EXISTS estado TEXT NOT NULL DEFAULT 'Nuevo'");
+  await pool.query("ALTER TABLE respuestas ADD COLUMN IF NOT EXISTS tipo TEXT NOT NULL DEFAULT 'comercial'");
 }
 
 // ---------- utilidades ----------
@@ -33,13 +58,7 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": 
 const fecha = d => new Date(d).toLocaleString("es-CO", { timeZone: "America/Bogota", dateStyle: "medium", timeStyle: "short" });
 const sha = s => crypto.createHash("sha256").update(String(s)).digest();
 const tokenValido = t => /^[A-Za-z0-9_-]{24,}$/.test(t || "");
-// Etiqueta del tipo de briefing (variable TIPO_BRIEFING en Render: "Hogar" o "Comercial")
-const TIPO = (process.env.TIPO_BRIEFING || "").trim().slice(0, 20);
-const TIPO_COLOR = /hogar|home/i.test(TIPO) ? "#9A5B34" : "#3E5A4C";
-const tipoTxt = TIPO ? " " + TIPO.toLowerCase() : "";
-const tituloDe = d => d.marca || d.nombre || "";
-const subDe = d => (d.marca ? d.nombre : d.correo || d.ciudad) || "";
-const slugify = t => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+const slugify = t => String(t || "").normalize("NFD").replace(/[̀-ͯ]/g, "")
   .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 const urlPublica = () => (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || "").replace(/\/+$/, "");
 
@@ -48,7 +67,7 @@ const css = `
 --display:"Italiana",Georgia,serif;--body:"Figtree","Segoe UI",system-ui,sans-serif}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.5;padding:0 16px 64px}
-.wrap{max-width:760px;margin:0 auto}
+.wrap{max-width:900px;margin:0 auto}
 header{padding:32px 0 20px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
 .brand{font-family:var(--display);font-size:22px;letter-spacing:.3em;text-transform:uppercase;text-decoration:none;color:var(--ink)}
 h1{font-family:var(--display);font-weight:400;font-size:34px;margin:24px 0 6px}
@@ -63,6 +82,10 @@ a{color:var(--accent)}
 .campo{padding:9px 12px;border:1px solid var(--line);border-radius:4px;background:var(--surface);color:var(--ink);font:inherit;font-size:14px}
 .tag{display:inline-block;padding:2px 10px;border-radius:999px;border:1px solid var(--line);background:var(--surface);font-size:12px;white-space:nowrap}
 .tag.n{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.tipo{display:inline-block;padding:2px 10px;border-radius:999px;color:#fff;font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;white-space:nowrap}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:18px 0 14px}
+.tab{padding:8px 14px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink);text-decoration:none;font-size:14px}
+.tab.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 section{padding:24px 0 8px;border-bottom:1px solid var(--line)}
 .num{font-size:12px;letter-spacing:.14em;color:var(--accent);font-weight:600;margin-right:10px}
 dl{margin:0}
@@ -70,33 +93,60 @@ dt{font-size:13px;color:var(--muted);margin-top:14px}
 dd{margin:2px 0 0;white-space:pre-wrap;font-size:15px}
 dd.vacio{color:var(--muted)}
 .acciones{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-@media print{body{background:#fff;padding:0}.acciones,.noprint{display:none}}
+.elige{display:flex;flex-direction:column;gap:12px;max-width:420px;margin-top:28px}
+.elige .btn{text-align:center;padding:16px 20px;font-size:16px}
+@media print{body{background:#fff;padding:0}.acciones,.noprint,.tabs{display:none}}
 `;
 
-function page(titulo, cuerpo, base) {
+function page(titulo, cuerpo, base, color) {
   return `<!doctype html><html lang="es"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(titulo)}${TIPO ? " · " + esc(TIPO) : ""}</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(titulo)}</title>
 <meta name="robots" content="noindex,nofollow"><meta name="referrer" content="no-referrer">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Italiana&family=Figtree:wght@400;500;600&display=swap">
-<style>${css}body{border-top:6px solid ${TIPO_COLOR}}.tipo{display:inline-block;padding:3px 12px;border-radius:999px;color:#fff;font-size:12px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;margin-right:10px}</style></head><body><div class="wrap">
-<header><a class="brand" href="${esc(base)}">Sencia</a><span class="muted noprint">${TIPO ? `<span class="tipo" style="background:${TIPO_COLOR}">${esc(TIPO)}</span>` : ""}Panel de briefings</span></header>
+<style>${css}${color ? `body{border-top:6px solid ${color}}` : ""}</style></head><body><div class="wrap">
+<header><a class="brand" href="${esc(base)}">Sencia</a><span class="muted noprint">Panel de briefings</span></header>
 ${cuerpo}</div></body></html>`;
 }
 
 const tag = e => `<span class="tag${e === "Nuevo" ? " n" : ""}">${esc(e)}</span>`;
+const tipoTag = t => `<span class="tipo" style="background:${t.color}">${esc(t.etiqueta)}</span>`;
+
+// ---------- Formularios públicos ----------
+const plantilla = fs.readFileSync(path.join(__dirname, "formulario.html"), "utf8");
+function formulario(t) {
+  const valores = {
+    TITULO_PAG: t.titulo, H1: t.h1, INTRO: t.intro, SECCIONES: String(t.S.length), DURACION: t.duracion,
+    KEY: `sencia-briefing-${t.slug}-v1`, QFILE: t.archivo, TIPO: t.slug,
+  };
+  return plantilla.replace(/\{\{(\w+)\}\}/g, (m, k) => esc(valores[k] ?? ""));
+}
+const paginas = {};
+Object.values(TIPOS).forEach(t => { paginas[t.slug] = formulario(t); app.get("/" + t.slug, (req, res) => res.type("html").send(paginas[t.slug])); });
+
+app.get("/", (req, res) => {
+  res.type("html").send(`<!doctype html><html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Briefing Sencia</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Italiana&family=Figtree:wght@400;500;600&display=swap">
+<style>${css}</style></head><body><div class="wrap" style="max-width:640px">
+<header><span class="brand">Sencia</span><span class="muted">Estudio de diseño interior</span></header>
+<h1>Cuéntanos sobre tu proyecto</h1>
+<p class="muted">Elige el briefing que corresponde. Te toma entre 15 y 25 minutos y no hay respuestas correctas.</p>
+<div class="elige">
+  ${Object.values(TIPOS).map((t, i) => `<a class="btn${i ? " s" : ""}" href="/${t.slug}">${esc(t.h1)}</a>`).join("")}
+</div></div></body></html>`);
+});
 
 // ---------- Exportar un briefing (CSV y PDF) ----------
 const celda = v => '"' + String(v ?? "").replace(/"/g, '""') + '"';
 
-function nombreArchivo(datos, id, ext) {
-  const partes = ["briefing", slugify(TIPO), slugify(tituloDe(datos)) || "sin-nombre", id].filter(Boolean);
-  return `${partes.join("-")}.${ext}`;
+function nombreArchivo(t, datos, id, ext) {
+  return ["briefing", t.slug, slugify(t.tituloDe(datos)) || "sin-nombre", id].join("-") + "." + ext;
 }
 
-function csvUno(id, creado, estado, datos) {
+function csvUno(t, id, creado, estado, datos) {
   const filas = [["Sección", "Pregunta", "Respuesta"],
-    ...(TIPO ? [["Registro", "Tipo", TIPO]] : []), ["Registro", "Ref.", "#" + id], ["Registro", "Fecha", fecha(creado)], ["Registro", "Estado", estado]];
-  S.forEach(s => s.q.forEach(q => filas.push([s.t, q.l, (datos[q.id] || "").trim()])));
+    ["Registro", "Tipo", t.etiqueta], ["Registro", "Ref.", "#" + id], ["Registro", "Fecha", fecha(creado)], ["Registro", "Estado", estado]];
+  t.S.forEach(s => s.q.forEach(q => filas.push([s.t, q.l, (datos[q.id] || "").trim()])));
   return "﻿" + filas.map(f => f.map(celda).join(",")).join("\r\n");
 }
 
@@ -104,19 +154,20 @@ function csvUno(id, creado, estado, datos) {
 const pdfOk = s => String(s ?? "").replace(/[  ]/g, " ").replace(/\r/g, "")
   .replace(/[^\n -~ -ÿ–—‘’“”•…€]/g, "");
 
-function crearPdf(id, creado, estado, datos) {
-  const ACC = "#3E5A4C", MUT = "#626A60", INK = "#20251F", LINE = "#D3D6CE";
+function crearPdf(t, id, creado, estado, datos) {
+  const ACC = t.color, MUT = "#626A60", INK = "#20251F", LINE = "#D3D6CE";
   const M = 56;
   const doc = new PDFDocument({
     size: "A4", bufferPages: true,
     margins: { top: M, bottom: 64, left: M, right: M },
-    info: { Title: pdfOk(`Briefing${tipoTxt} ${tituloDe(datos) || id}`), Author: "Sencia Estudio" },
+    info: { Title: pdfOk(`Briefing ${t.etiqueta.toLowerCase()} ${t.tituloDe(datos) || id}`), Author: "Sencia Estudio" },
   });
-  doc.font("Helvetica").fontSize(9).fillColor(ACC).text("SENCIA · ESTUDIO DE DISEÑO INTERIOR" + (TIPO ? " · BRIEFING " + pdfOk(TIPO).toUpperCase() : ""), { characterSpacing: 2 });
-  doc.moveDown(1.2).font("Times-Roman").fontSize(26).fillColor(INK).text(pdfOk(tituloDe(datos) || "Briefing"));
+  doc.font("Helvetica").fontSize(9).fillColor(ACC)
+    .text(`SENCIA · ESTUDIO DE DISEÑO INTERIOR · BRIEFING ${pdfOk(t.etiqueta).toUpperCase()}`, { characterSpacing: 2 });
+  doc.moveDown(1.2).font("Times-Roman").fontSize(26).fillColor(INK).text(pdfOk(t.tituloDe(datos) || "Briefing"));
   doc.moveDown(0.3).font("Helvetica").fontSize(10).fillColor(MUT)
-    .text(pdfOk(`Briefing${tipoTxt} #${id} · ${fecha(creado)} · Estado: ${estado}`));
-  S.forEach((s, i) => {
+    .text(pdfOk(`Briefing ${t.etiqueta.toLowerCase()} #${id} · ${fecha(creado)} · Estado: ${estado}`));
+  t.S.forEach((s, i) => {
     if (doc.y > doc.page.height - 160) doc.addPage();
     doc.moveDown(1.6).font("Times-Roman").fontSize(16).fillColor(INK).text(`${String(i + 1).padStart(2, "0")}   ${pdfOk(s.t)}`);
     const y = doc.y + 3;
@@ -135,20 +186,20 @@ function crearPdf(id, creado, estado, datos) {
     doc.switchToPage(i);
     doc.page.margins.bottom = 0; // para poder escribir el pie sin que cree otra página
     doc.font("Helvetica").fontSize(8).fillColor(MUT).text(
-      `Sencia Estudio · Briefing #${id} · Página ${i + 1} de ${rango.count}`,
+      `Sencia Estudio · Briefing ${pdfOk(t.etiqueta.toLowerCase())} #${id} · Página ${i + 1} de ${rango.count}`,
       M, doc.page.height - 40, { align: "center", width: doc.page.width - 2 * M, lineBreak: false });
   }
   return doc;
 }
 
 async function cargarBriefing(id) {
-  const r = await pool.query("SELECT id, creado, estado, datos FROM respuestas WHERE id=$1", [id]);
+  const r = await pool.query("SELECT id, creado, estado, tipo, datos FROM respuestas WHERE id=$1", [id]);
   return r.rows[0] || null;
 }
 
 // ---------- Avisos automáticos (correo y WhatsApp) ----------
-function correoHtml(id, datos, link) {
-  const secciones = S.map((s, i) => {
+function correoHtml(t, id, datos, link) {
+  const secciones = t.S.map((s, i) => {
     const filas = s.q.map(q => {
       const v = (datos[q.id] || "").trim();
       return `<tr><td style="padding:6px 12px 6px 0;color:#626A60;vertical-align:top;width:40%">${esc(q.l)}</td>
@@ -159,14 +210,14 @@ function correoHtml(id, datos, link) {
       <table style="width:100%;border-collapse:collapse;font-size:14px">${filas}</table>`;
   }).join("");
   return `<div style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;color:#20251F;line-height:1.5">
-    <p style="letter-spacing:.3em;text-transform:uppercase;font-size:13px;margin:0">Sencia · Briefing${esc(tipoTxt)}</p>
-    <h2 style="font-family:Georgia,serif;font-weight:400;font-size:28px;margin:12px 0 4px">${esc(tituloDe(datos))}</h2>
+    <p style="letter-spacing:.3em;text-transform:uppercase;font-size:13px;margin:0">Sencia · Briefing ${esc(t.etiqueta.toLowerCase())}</p>
+    <h2 style="font-family:Georgia,serif;font-weight:400;font-size:28px;margin:12px 0 4px">${esc(t.tituloDe(datos))}</h2>
     <p style="color:#626A60;margin:0 0 16px">Briefing #${id} · ${esc(datos.tel)}</p>
-    ${link ? `<p><a href="${esc(link)}" style="display:inline-block;background:${TIPO_COLOR};color:#F4F6F1;padding:10px 16px;border-radius:4px;text-decoration:none;font-weight:600">Abrir en el panel</a></p>` : ""}
+    ${link ? `<p><a href="${esc(link)}" style="display:inline-block;background:${t.color};color:#F4F6F1;padding:10px 16px;border-radius:4px;text-decoration:none;font-weight:600">Abrir en el panel</a></p>` : ""}
     ${secciones}</div>`;
 }
 
-async function enviarCorreo(id, datos, link) {
+async function enviarCorreo(t, id, datos, link) {
   const key = process.env.RESEND_API_KEY, para = process.env.NOTIFY_EMAIL;
   if (!key || !para) return;
   const r = await fetch("https://api.resend.com/emails", {
@@ -175,8 +226,8 @@ async function enviarCorreo(id, datos, link) {
     body: JSON.stringify({
       from: process.env.EMAIL_FROM || "Briefing Sencia <onboarding@resend.dev>",
       to: para.split(",").map(s => s.trim()).filter(Boolean),
-      subject: `${TIPO ? "[" + TIPO.toUpperCase() + "] " : ""}Nuevo briefing: ${tituloDe(datos)} (#${id})`,
-      html: correoHtml(id, datos, link),
+      subject: `[${t.etiqueta.toUpperCase()}] Nuevo briefing: ${t.tituloDe(datos)} (#${id})`,
+      html: correoHtml(t, id, datos, link),
     }),
     signal: AbortSignal.timeout(10000),
   });
@@ -184,21 +235,23 @@ async function enviarCorreo(id, datos, link) {
 }
 
 // WhatsApp vía CallMeBot. Mensaje corto a propósito: sin teléfono del cliente ni link del panel.
-async function enviarWhatsapp(id, datos) {
+async function enviarWhatsapp(t, id, datos) {
   const key = process.env.CALLMEBOT_APIKEY;
   const num = (process.env.WHATSAPP_NUMBER || "").replace(/\D/g, "");
   if (!key || !num) return;
-  const texto = `Nuevo briefing${TIPO ? " de " + TIPO.toUpperCase() : ""} #${id}: ${tituloDe(datos)}${datos.marca ? " (" + datos.nombre + ")" : ""}. Revisa tu correo o tu panel para ver las respuestas.`;
+  const titulo = t.tituloDe(datos);
+  const extra = datos.nombre && datos.nombre !== titulo ? ` (${datos.nombre})` : "";
+  const texto = `Nuevo briefing de ${t.etiqueta.toUpperCase()} #${id}: ${titulo}${extra}. Revisa tu correo o tu panel para ver las respuestas.`;
   const url = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent("+" + num)}&text=${encodeURIComponent(texto)}&apikey=${encodeURIComponent(key)}`;
   const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
   if (!r.ok) console.error("CallMeBot falló:", r.status, await r.text());
 }
 
-async function notificar(id, datos) {
+async function notificar(t, id, datos) {
   const base = urlPublica();
-  const t = process.env.ADMIN_TOKEN;
-  const link = base && tokenValido(t) ? `${base}/panel/${t}/${id}` : "";
-  const res = await Promise.allSettled([enviarCorreo(id, datos, link), enviarWhatsapp(id, datos)]);
+  const tk = process.env.ADMIN_TOKEN;
+  const link = base && tokenValido(tk) ? `${base}/panel/${tk}/${id}` : "";
+  const res = await Promise.allSettled([enviarCorreo(t, id, datos, link), enviarWhatsapp(t, id, datos)]);
   res.forEach(x => { if (x.status === "rejected") console.error("Aviso falló:", x.reason && x.reason.message); });
 }
 
@@ -229,18 +282,20 @@ app.post("/api/respuestas", limite, async (req, res) => {
     const body = req.body || {};
     // Campo trampa: las personas no lo ven, los bots sí lo llenan
     if (typeof body.web === "string" && body.web.trim()) return res.json({ id: 0 });
+    const t = TIPOS[body.tipo];
+    if (!t) return res.status(400).json({ error: "Tipo de briefing no válido" });
     if (body.acepto !== true) return res.status(400).json({ error: "Debes aceptar el tratamiento de datos personales" });
     const datos = {};
-    all.forEach(q => {
+    t.all.forEach(q => {
       datos[q.id] = typeof body[q.id] === "string" ? body[q.id].slice(0, 5000) : "";
     });
-    const falta = all.filter(q => q.req && !datos[q.id].trim());
+    const falta = t.all.filter(q => q.req && !datos[q.id].trim());
     if (falta.length) return res.status(400).json({ error: "Falta: " + falta.map(q => q.l.toLowerCase()).join(", ") });
     datos.acepto_datos = true; // la fecha de aceptación es la fecha de la respuesta (columna creado)
-    const r = await pool.query("INSERT INTO respuestas (datos) VALUES ($1) RETURNING id", [datos]);
+    const r = await pool.query("INSERT INTO respuestas (datos, tipo) VALUES ($1, $2) RETURNING id", [datos, t.slug]);
     const id = r.rows[0].id;
     res.json({ id });
-    notificar(id, datos).catch(e => console.error("Aviso falló:", e.message)); // no frena la respuesta al cliente
+    notificar(t, id, datos).catch(e => console.error("Aviso falló:", e.message)); // no frena la respuesta al cliente
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Error del servidor" });
@@ -251,9 +306,9 @@ app.post("/api/respuestas", limite, async (req, res) => {
 // No hay contraseña que escribir: el acceso es el link secreto. Quien no tenga el link recibe "No encontrado".
 const panel = express.Router();
 app.use("/panel/:token", (req, res, next) => {
-  const t = process.env.ADMIN_TOKEN;
-  if (!tokenValido(t)) return res.status(500).send("Configura ADMIN_TOKEN: mínimo 24 letras o números, sin espacios ni símbolos.");
-  if (!crypto.timingSafeEqual(sha(req.params.token), sha(t))) return res.status(404).send("No encontrado");
+  const tk = process.env.ADMIN_TOKEN;
+  if (!tokenValido(tk)) return res.status(500).send("Configura ADMIN_TOKEN: mínimo 24 letras o números, sin espacios ni símbolos.");
+  if (!crypto.timingSafeEqual(sha(req.params.token), sha(tk))) return res.status(404).send("No encontrado");
   res.set({ "X-Robots-Tag": "noindex, nofollow", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" });
   next();
 }, panel);
@@ -264,6 +319,7 @@ panel.get("/", async (req, res) => {
     const POR_PAGINA = 25;
     const q = String(req.query.q || "").trim().slice(0, 100);
     const estado = ESTADOS.includes(req.query.estado) ? req.query.estado : "";
+    const tipo = TIPOS[req.query.tipo] ? req.query.tipo : "";
     const pagina = Math.max(1, parseInt(req.query.page, 10) || 1);
     const cond = [], args = [];
     if (q) {
@@ -271,44 +327,75 @@ panel.get("/", async (req, res) => {
       cond.push(`(datos->>'marca' ILIKE $${args.length} OR datos->>'nombre' ILIKE $${args.length} OR datos->>'correo' ILIKE $${args.length} OR datos->>'barrio' ILIKE $${args.length})`);
     }
     if (estado) { args.push(estado); cond.push(`estado = $${args.length}`); }
+    if (tipo) { args.push(tipo); cond.push(`tipo = $${args.length}`); }
     const donde = cond.length ? "WHERE " + cond.join(" AND ") : "";
     const total = parseInt((await pool.query(`SELECT count(*) AS n FROM respuestas ${donde}`, args)).rows[0].n, 10);
-    const paginas = Math.max(1, Math.ceil(total / POR_PAGINA));
+    const paginasTotal = Math.max(1, Math.ceil(total / POR_PAGINA));
     const r = await pool.query(
-      `SELECT id, creado, estado, datos FROM respuestas ${donde} ORDER BY id DESC LIMIT ${POR_PAGINA} OFFSET ${(pagina - 1) * POR_PAGINA}`, args);
-    const filas = r.rows.map(x => `<tr>
-      <td>#${x.id}</td><td>${esc(fecha(x.creado))}</td>
-      <td><a href="${esc(base)}/${x.id}">${esc(tituloDe(x.datos) || "—")}</a></td>
-      <td>${esc(x.datos.tel)}<br><span class="muted">${esc(subDe(x.datos))}</span></td>
-      <td>${esc(x.datos.presupuesto || "—")}</td><td>${tag(x.estado)}</td></tr>`).join("");
-    const enlace = n => `${base}?page=${n}${q ? "&q=" + encodeURIComponent(q) : ""}${estado ? "&estado=" + encodeURIComponent(estado) : ""}`;
-    const nav = paginas > 1 ? `<p class="muted">Página ${pagina} de ${paginas} ·
-      ${pagina > 1 ? `<a href="${esc(enlace(pagina - 1))}">← Anterior</a>` : ""}
-      ${pagina < paginas ? `<a href="${esc(enlace(pagina + 1))}">Siguiente →</a>` : ""}</p>` : "";
+      `SELECT id, creado, estado, tipo, datos FROM respuestas ${donde} ORDER BY id DESC LIMIT ${POR_PAGINA} OFFSET ${(pagina - 1) * POR_PAGINA}`, args);
+    const cuentas = {};
+    (await pool.query("SELECT tipo, count(*) AS n FROM respuestas GROUP BY tipo")).rows.forEach(x => { cuentas[x.tipo] = parseInt(x.n, 10); });
+    const suma = Object.values(cuentas).reduce((a, b) => a + b, 0);
+
+    const filas = r.rows.map(x => {
+      const t = tipoDe(x.tipo);
+      return `<tr>
+      <td>#${x.id}</td><td>${esc(fecha(x.creado))}</td><td>${tipoTag(t)}</td>
+      <td><a href="${esc(base)}/${x.id}">${esc(t.tituloDe(x.datos) || "—")}</a></td>
+      <td>${esc(x.datos.tel)}<br><span class="muted">${esc(t.subDe(x.datos))}</span></td>
+      <td>${esc(x.datos.presupuesto || "—")}</td><td>${tag(x.estado)}</td></tr>`;
+    }).join("");
+
+    const filtros = (extra = {}) => {
+      const p = { q, estado, tipo, ...extra };
+      const qs = Object.entries(p).filter(([, v]) => v).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
+      return qs;
+    };
+    const href = (extra) => `${base}${filtros(extra) ? "?" + filtros(extra) : ""}`;
+    const tabs = [["", "Todos", suma], ...Object.values(TIPOS).map(t => [t.slug, t.etiqueta, cuentas[t.slug] || 0])]
+      .map(([k, nombre, n]) => `<a class="tab${tipo === k ? " on" : ""}" href="${esc(href({ tipo: k, page: "" }))}">${esc(nombre)} (${n})</a>`).join("");
+    const nav = paginasTotal > 1 ? `<p class="muted">Página ${pagina} de ${paginasTotal} ·
+      ${pagina > 1 ? `<a href="${esc(href({ page: pagina - 1 }))}">← Anterior</a>` : ""}
+      ${pagina < paginasTotal ? `<a href="${esc(href({ page: pagina + 1 }))}">Siguiente →</a>` : ""}</p>` : "";
+    const csvHref = `${base}/export.csv${tipo ? "?tipo=" + tipo : ""}`;
     res.send(page("Briefings", `
-      <h1>Briefings${esc(tipoTxt)} recibidos</h1>
+      <h1>Briefings recibidos</h1>
+      <div class="tabs">${tabs}</div>
       <form method="get" action="${esc(base)}" class="acciones">
+        ${tipo ? `<input type="hidden" name="tipo" value="${esc(tipo)}">` : ""}
         <input class="campo" name="q" value="${esc(q)}" placeholder="Buscar por nombre, negocio, correo o barrio" style="flex:1;min-width:200px">
         <select class="campo" name="estado"><option value="">Todos los estados</option>
           ${ESTADOS.map(e => `<option${e === estado ? " selected" : ""}>${esc(e)}</option>`).join("")}</select>
         <button class="btn" type="submit">Filtrar</button>
-        <a class="btn s" href="${esc(base)}/export.csv">Descargar CSV</a>
+        <a class="btn s" href="${esc(csvHref)}">${tipo ? "Descargar CSV completo" : "Descargar CSV (resumen)"}</a>
       </form>
-      <p class="muted">${total} ${q || estado ? "resultado(s)" : "en total"}</p>
-      <table><tr><th>Ref.</th><th>Fecha</th><th>Cliente</th><th>Contacto</th><th>Inversión</th><th>Estado</th></tr>
-      ${filas || '<tr><td colspan="6" class="muted">No hay respuestas.</td></tr>'}</table>
+      <p class="muted">${total} ${q || estado || tipo ? "resultado(s)" : "en total"}</p>
+      <table><tr><th>Ref.</th><th>Fecha</th><th>Tipo</th><th>Cliente</th><th>Contacto</th><th>Inversión</th><th>Estado</th></tr>
+      ${filas || '<tr><td colspan="7" class="muted">No hay respuestas.</td></tr>'}</table>
       ${nav}`, base));
   } catch (e) { console.error(e); res.status(500).send("Error del servidor"); }
 });
 
+// CSV de todos: con ?tipo=hogar|comercial trae todas las preguntas de ese tipo; sin tipo, un resumen común.
 panel.get("/export.csv", async (req, res) => {
   try {
-    const r = await pool.query("SELECT id, creado, estado, datos FROM respuestas ORDER BY id");
-    const cel = v => '"' + String(v ?? "").replace(/"/g, '""') + '"';
-    const lineas = [["Ref", "Fecha", "Estado", ...all.map(q => q.l)].map(cel).join(",")];
-    r.rows.forEach(x => lineas.push([x.id, fecha(x.creado), x.estado, ...all.map(q => x.datos[q.id])].map(cel).join(",")));
+    const t = TIPOS[req.query.tipo];
+    const r = t
+      ? await pool.query("SELECT id, creado, estado, tipo, datos FROM respuestas WHERE tipo=$1 ORDER BY id", [t.slug])
+      : await pool.query("SELECT id, creado, estado, tipo, datos FROM respuestas ORDER BY id");
+    let lineas;
+    if (t) {
+      lineas = [["Ref", "Fecha", "Estado", ...t.all.map(q => q.l)].map(celda).join(",")];
+      r.rows.forEach(x => lineas.push([x.id, fecha(x.creado), x.estado, ...t.all.map(q => x.datos[q.id])].map(celda).join(",")));
+    } else {
+      lineas = [["Ref", "Fecha", "Tipo", "Estado", "Cliente", "Nombre", "Celular", "Correo", "Ciudad", "Inversión"].map(celda).join(",")];
+      r.rows.forEach(x => {
+        const tt = tipoDe(x.tipo), d = x.datos;
+        lineas.push([x.id, fecha(x.creado), tt.etiqueta, x.estado, tt.tituloDe(d), d.nombre, d.tel, d.correo, d.ciudad, d.presupuesto].map(celda).join(","));
+      });
+    }
     res.set("Content-Type", "text/csv; charset=utf-8");
-    res.set("Content-Disposition", 'attachment; filename="briefings-sencia.csv"');
+    res.set("Content-Disposition", `attachment; filename="briefings-sencia${t ? "-" + t.slug : ""}.csv"`);
     res.send("﻿" + lineas.join("\r\n"));
   } catch (e) { console.error(e); res.status(500).send("Error del servidor"); }
 });
@@ -318,9 +405,10 @@ panel.get("/:id/export.csv", async (req, res) => {
     const id = parseInt(req.params.id, 10);
     const b = id && await cargarBriefing(id);
     if (!b) return res.status(404).send("No encontrado");
+    const t = tipoDe(b.tipo);
     res.set("Content-Type", "text/csv; charset=utf-8");
-    res.set("Content-Disposition", `attachment; filename="${nombreArchivo(b.datos, id, "csv")}"`);
-    res.send(csvUno(id, b.creado, b.estado, b.datos));
+    res.set("Content-Disposition", `attachment; filename="${nombreArchivo(t, b.datos, id, "csv")}"`);
+    res.send(csvUno(t, id, b.creado, b.estado, b.datos));
   } catch (e) { console.error(e); res.status(500).send("Error del servidor"); }
 });
 
@@ -329,9 +417,10 @@ panel.get("/:id/export.pdf", async (req, res) => {
     const id = parseInt(req.params.id, 10);
     const b = id && await cargarBriefing(id);
     if (!b) return res.status(404).send("No encontrado");
-    const doc = crearPdf(id, b.creado, b.estado, b.datos);
+    const t = tipoDe(b.tipo);
+    const doc = crearPdf(t, id, b.creado, b.estado, b.datos);
     res.set("Content-Type", "application/pdf");
-    res.set("Content-Disposition", `attachment; filename="${nombreArchivo(b.datos, id, "pdf")}"`);
+    res.set("Content-Disposition", `attachment; filename="${nombreArchivo(t, b.datos, id, "pdf")}"`);
     doc.pipe(res);
     doc.end();
   } catch (e) { console.error(e); if (!res.headersSent) res.status(500).send("Error del servidor"); }
@@ -341,19 +430,19 @@ panel.get("/:id", async (req, res) => {
   try {
     const base = req.baseUrl;
     const id = parseInt(req.params.id, 10);
-    if (!id) return res.status(404).send("No encontrado");
-    const r = await pool.query("SELECT id, creado, estado, datos FROM respuestas WHERE id=$1", [id]);
-    if (!r.rows.length) return res.status(404).send("No encontrado");
-    const { creado, estado, datos } = r.rows[0];
-    const secciones = S.map((s, i) => `<section>
+    const b = id && await cargarBriefing(id);
+    if (!b) return res.status(404).send("No encontrado");
+    const { creado, estado, datos } = b;
+    const t = tipoDe(b.tipo);
+    const secciones = t.S.map((s, i) => `<section>
       <h2><span class="num">${String(i + 1).padStart(2, "0")}</span>${esc(s.t)}</h2>
       <dl>${s.q.map(q => {
         const v = (datos[q.id] || "").trim();
         return `<dt>${esc(q.l)}</dt><dd class="${v ? "" : "vacio"}">${v ? esc(v) : "—"}</dd>`;
       }).join("")}</dl></section>`).join("");
-    res.send(page(`Briefing ${tituloDe(datos) || id}`, `
-      <h1>${esc(tituloDe(datos) || "Briefing")}</h1>
-      <p class="muted">Briefing${esc(tipoTxt)} #${id} · ${esc(fecha(creado))} · ${esc(datos.tel)} · ${tag(estado)}</p>
+    res.send(page(`Briefing ${t.tituloDe(datos) || id} · ${t.etiqueta}`, `
+      <h1>${esc(t.tituloDe(datos) || "Briefing")}</h1>
+      <p class="muted">${tipoTag(t)} Briefing #${id} · ${esc(fecha(creado))} · ${esc(datos.tel)} · ${tag(estado)}</p>
       <form method="post" action="${esc(base)}/${id}/estado" class="acciones">
         <a class="btn s" href="${esc(base)}">← Volver</a>
         <select class="campo" name="estado" aria-label="Estado">
@@ -362,7 +451,7 @@ panel.get("/:id", async (req, res) => {
         <a class="btn s" href="${esc(base)}/${id}/export.pdf">Descargar PDF</a>
         <a class="btn s" href="${esc(base)}/${id}/export.csv">Descargar CSV</a>
       </form>
-      ${secciones}`, base));
+      ${secciones}`, base, t.color));
   } catch (e) { console.error(e); res.status(500).send("Error del servidor"); }
 });
 

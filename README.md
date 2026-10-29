@@ -1,6 +1,15 @@
-# Briefing Sencia
+# Briefing Sencia (hogar y comercial)
 
-Formulario del briefing + guardado de respuestas en Postgres + panel privado + avisos automáticos por correo y WhatsApp.
+Un solo servicio con los dos briefings, una sola base de datos y un solo panel.
+
+## Direcciones
+
+| Dirección | Para qué |
+|---|---|
+| `https://TU-DOMINIO/hogar` | Briefing para el hogar (link para clientes) |
+| `https://TU-DOMINIO/comercial` | Briefing para proyectos comerciales (link para clientes) |
+| `https://TU-DOMINIO/` | Página que deja elegir entre los dos |
+| `https://TU-DOMINIO/panel/ADMIN_TOKEN` | Panel privado de Manuela (hogar y comercial juntos) |
 
 ## Variables de entorno
 
@@ -14,19 +23,23 @@ Formulario del briefing + guardado de respuestas en Postgres + panel privado + a
 | `EMAIL_FROM` | (opcional) Remitente. Por defecto `Briefing Sencia <onboarding@resend.dev>` |
 | `WHATSAPP_NUMBER` | Número de Manuela con indicativo, sin + ni espacios (ej. `573001234567`) |
 | `CALLMEBOT_APIKEY` | Clave de CallMeBot para el aviso automático por WhatsApp |
-| `PUBLIC_URL` | (opcional en Render) Dirección pública, ej. `https://briefing.onrender.com` |
+| `PUBLIC_URL` | (opcional en Render) Dirección pública, ej. `https://briefing-sencia.onrender.com` |
 
 Todo lo de correo y WhatsApp es opcional: si falta, simplemente no se envía ese aviso y las respuestas se guardan igual.
 
-## Panel privado
+## Panel
 
-Se abre en `https://TU-DOMINIO/panel/ADMIN_TOKEN` (no hay contraseña: el acceso es el link, guárdalo como favorito y no lo compartas). Desde ahí se ven los briefings, se buscan, se filtran por estado y se exportan: todos juntos en CSV, o cada briefing por separado en PDF y CSV (botones en la ficha).
+- Pestañas **Todos / Hogar / Comercial** con el número de briefings de cada uno.
+- Cada fila muestra una etiqueta de color: **Hogar** (terracota) y **Comercial** (verde).
+- Búsqueda, filtro por estado y estados (Nuevo, Contactado, Propuesta enviada, Cerrado, Descartado).
+- Cada briefing se exporta por separado en PDF y CSV. El CSV general sale como resumen en "Todos" y completo si estás en una pestaña de tipo.
+- Los correos llegan con el asunto `[HOGAR]` o `[COMERCIAL]`, y el WhatsApp dice de qué tipo es.
 
 ## Cómo funciona
 
-- `public/questions.js`: todas las preguntas. Si cambias una, cambia en el formulario, el panel y el correo.
-- `public/index.html`: el formulario.
-- `server.js`: guarda las respuestas (`POST /api/respuestas`), sirve el panel y manda los avisos.
+- `public/questions-hogar.js` y `public/questions-comercial.js`: las preguntas de cada briefing.
+- `formulario.html`: la plantilla del formulario, que se llena con los textos de cada tipo.
+- `server.js`: guarda las respuestas, sirve los formularios y el panel, y manda los avisos.
 
 ## Probar en local
 
