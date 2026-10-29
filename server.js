@@ -33,6 +33,14 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": 
 const fecha = d => new Date(d).toLocaleString("es-CO", { timeZone: "America/Bogota", dateStyle: "medium", timeStyle: "short" });
 const sha = s => crypto.createHash("sha256").update(String(s)).digest();
 const tokenValido = t => /^[A-Za-z0-9_-]{24,}$/.test(t || "");
+// Etiqueta del tipo de briefing (variable TIPO_BRIEFING en Render: "Hogar" o "Comercial")
+const TIPO = (process.env.TIPO_BRIEFING || "").trim().slice(0, 20);
+const TIPO_COLOR = /hogar|home/i.test(TIPO) ? "#9A5B34" : "#3E5A4C";
+const tipoTxt = TIPO ? " " + TIPO.toLowerCase() : "";
+const tituloDe = d => d.marca || d.nombre || "";
+const subDe = d => (d.marca ? d.nombre : d.correo || d.ciudad) || "";
+const slugify = t => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+  .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 const urlPublica = () => (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || "").replace(/\/+$/, "");
 
 const css = `
@@ -67,11 +75,11 @@ dd.vacio{color:var(--muted)}
 
 function page(titulo, cuerpo, base) {
   return `<!doctype html><html lang="es"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(titulo)}</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(titulo)}${TIPO ? " · " + esc(TIPO) : ""}</title>
 <meta name="robots" content="noindex,nofollow"><meta name="referrer" content="no-referrer">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Italiana&family=Figtree:wght@400;500;600&display=swap">
-<style>${css}</style></head><body><div class="wrap">
-<header><a class="brand" href="${esc(base)}">Sencia</a><span class="muted noprint">Panel de briefings</span></header>
+<style>${css}body{border-top:6px solid ${TIPO_COLOR}}.tipo{display:inline-block;padding:3px 12px;border-radius:999px;color:#fff;font-size:12px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;margin-right:10px}</style></head><body><div class="wrap">
+<header><a class="brand" href="${esc(base)}">Sencia</a><span class="muted noprint">${TIPO ? `<span class="tipo" style="background:${TIPO_COLOR}">${esc(TIPO)}</span>` : ""}Panel de briefings</span></header>
 ${cuerpo}</div></body></html>`;
 }
 
@@ -81,14 +89,13 @@ const tag = e => `<span class="tag${e === "Nuevo" ? " n" : ""}">${esc(e)}</span>
 const celda = v => '"' + String(v ?? "").replace(/"/g, '""') + '"';
 
 function nombreArchivo(datos, id, ext) {
-  const slug = String(datos.marca || "briefing").normalize("NFD").replace(/[̀-ͯ]/g, "")
-    .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "briefing";
-  return `briefing-${slug}-${id}.${ext}`;
+  const partes = ["briefing", slugify(TIPO), slugify(tituloDe(datos)) || "sin-nombre", id].filter(Boolean);
+  return `${partes.join("-")}.${ext}`;
 }
 
 function csvUno(id, creado, estado, datos) {
   const filas = [["Sección", "Pregunta", "Respuesta"],
-    ["Registro", "Ref.", "#" + id], ["Registro", "Fecha", fecha(creado)], ["Registro", "Estado", estado]];
+    ...(TIPO ? [["Registro", "Tipo", TIPO]] : []), ["Registro", "Ref.", "#" + id], ["Registro", "Fecha", fecha(creado)], ["Registro", "Estado", estado]];
   S.forEach(s => s.q.forEach(q => filas.push([s.t, q.l, (datos[q.id] || "").trim()])));
   return "﻿" + filas.map(f => f.map(celda).join(",")).join("\r\n");
 }
@@ -103,12 +110,12 @@ function crearPdf(id, creado, estado, datos) {
   const doc = new PDFDocument({
     size: "A4", bufferPages: true,
     margins: { top: M, bottom: 64, left: M, right: M },
-    info: { Title: pdfOk(`Briefing ${datos.marca || id}`), Author: "Sencia Estudio" },
+    info: { Title: pdfOk(`Briefing${tipoTxt} ${tituloDe(datos) || id}`), Author: "Sencia Estudio" },
   });
-  doc.font("Helvetica").fontSize(9).fillColor(ACC).text("SENCIA · ESTUDIO DE DISEÑO INTERIOR", { characterSpacing: 2 });
-  doc.moveDown(1.2).font("Times-Roman").fontSize(26).fillColor(INK).text(pdfOk(datos.marca || "Briefing"));
+  doc.font("Helvetica").fontSize(9).fillColor(ACC).text("SENCIA · ESTUDIO DE DISEÑO INTERIOR" + (TIPO ? " · BRIEFING " + pdfOk(TIPO).toUpperCase() : ""), { characterSpacing: 2 });
+  doc.moveDown(1.2).font("Times-Roman").fontSize(26).fillColor(INK).text(pdfOk(tituloDe(datos) || "Briefing"));
   doc.moveDown(0.3).font("Helvetica").fontSize(10).fillColor(MUT)
-    .text(pdfOk(`Briefing comercial #${id} · ${fecha(creado)} · ${datos.nombre || ""} · Estado: ${estado}`));
+    .text(pdfOk(`Briefing${tipoTxt} #${id} · ${fecha(creado)} · Estado: ${estado}`));
   S.forEach((s, i) => {
     if (doc.y > doc.page.height - 160) doc.addPage();
     doc.moveDown(1.6).font("Times-Roman").fontSize(16).fillColor(INK).text(`${String(i + 1).padStart(2, "0")}   ${pdfOk(s.t)}`);
@@ -152,10 +159,10 @@ function correoHtml(id, datos, link) {
       <table style="width:100%;border-collapse:collapse;font-size:14px">${filas}</table>`;
   }).join("");
   return `<div style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;color:#20251F;line-height:1.5">
-    <p style="letter-spacing:.3em;text-transform:uppercase;font-size:13px;margin:0">Sencia · Briefing comercial</p>
-    <h2 style="font-family:Georgia,serif;font-weight:400;font-size:28px;margin:12px 0 4px">${esc(datos.marca)}</h2>
-    <p style="color:#626A60;margin:0 0 16px">Briefing #${id} · ${esc(datos.nombre)} · ${esc(datos.tel)}</p>
-    ${link ? `<p><a href="${esc(link)}" style="display:inline-block;background:#3E5A4C;color:#F4F6F1;padding:10px 16px;border-radius:4px;text-decoration:none;font-weight:600">Abrir en el panel</a></p>` : ""}
+    <p style="letter-spacing:.3em;text-transform:uppercase;font-size:13px;margin:0">Sencia · Briefing${esc(tipoTxt)}</p>
+    <h2 style="font-family:Georgia,serif;font-weight:400;font-size:28px;margin:12px 0 4px">${esc(tituloDe(datos))}</h2>
+    <p style="color:#626A60;margin:0 0 16px">Briefing #${id} · ${esc(datos.tel)}</p>
+    ${link ? `<p><a href="${esc(link)}" style="display:inline-block;background:${TIPO_COLOR};color:#F4F6F1;padding:10px 16px;border-radius:4px;text-decoration:none;font-weight:600">Abrir en el panel</a></p>` : ""}
     ${secciones}</div>`;
 }
 
@@ -168,7 +175,7 @@ async function enviarCorreo(id, datos, link) {
     body: JSON.stringify({
       from: process.env.EMAIL_FROM || "Briefing Sencia <onboarding@resend.dev>",
       to: para.split(",").map(s => s.trim()).filter(Boolean),
-      subject: `Nuevo briefing: ${datos.marca} (#${id})`,
+      subject: `${TIPO ? "[" + TIPO.toUpperCase() + "] " : ""}Nuevo briefing: ${tituloDe(datos)} (#${id})`,
       html: correoHtml(id, datos, link),
     }),
     signal: AbortSignal.timeout(10000),
@@ -181,7 +188,7 @@ async function enviarWhatsapp(id, datos) {
   const key = process.env.CALLMEBOT_APIKEY;
   const num = (process.env.WHATSAPP_NUMBER || "").replace(/\D/g, "");
   if (!key || !num) return;
-  const texto = `Nuevo briefing #${id}: ${datos.marca} (${datos.nombre}). Revisa tu correo o tu panel para ver las respuestas.`;
+  const texto = `Nuevo briefing${TIPO ? " de " + TIPO.toUpperCase() : ""} #${id}: ${tituloDe(datos)}${datos.marca ? " (" + datos.nombre + ")" : ""}. Revisa tu correo o tu panel para ver las respuestas.`;
   const url = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent("+" + num)}&text=${encodeURIComponent(texto)}&apikey=${encodeURIComponent(key)}`;
   const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
   if (!r.ok) console.error("CallMeBot falló:", r.status, await r.text());
@@ -261,7 +268,7 @@ panel.get("/", async (req, res) => {
     const cond = [], args = [];
     if (q) {
       args.push("%" + q.replace(/[\\%_]/g, "\\$&") + "%");
-      cond.push(`(datos->>'marca' ILIKE $${args.length} OR datos->>'nombre' ILIKE $${args.length} OR datos->>'correo' ILIKE $${args.length})`);
+      cond.push(`(datos->>'marca' ILIKE $${args.length} OR datos->>'nombre' ILIKE $${args.length} OR datos->>'correo' ILIKE $${args.length} OR datos->>'barrio' ILIKE $${args.length})`);
     }
     if (estado) { args.push(estado); cond.push(`estado = $${args.length}`); }
     const donde = cond.length ? "WHERE " + cond.join(" AND ") : "";
@@ -271,24 +278,24 @@ panel.get("/", async (req, res) => {
       `SELECT id, creado, estado, datos FROM respuestas ${donde} ORDER BY id DESC LIMIT ${POR_PAGINA} OFFSET ${(pagina - 1) * POR_PAGINA}`, args);
     const filas = r.rows.map(x => `<tr>
       <td>#${x.id}</td><td>${esc(fecha(x.creado))}</td>
-      <td><a href="${esc(base)}/${x.id}">${esc(x.datos.marca || "—")}</a></td>
-      <td>${esc(x.datos.nombre)}<br><span class="muted">${esc(x.datos.tel)}</span></td>
+      <td><a href="${esc(base)}/${x.id}">${esc(tituloDe(x.datos) || "—")}</a></td>
+      <td>${esc(x.datos.tel)}<br><span class="muted">${esc(subDe(x.datos))}</span></td>
       <td>${esc(x.datos.presupuesto || "—")}</td><td>${tag(x.estado)}</td></tr>`).join("");
     const enlace = n => `${base}?page=${n}${q ? "&q=" + encodeURIComponent(q) : ""}${estado ? "&estado=" + encodeURIComponent(estado) : ""}`;
     const nav = paginas > 1 ? `<p class="muted">Página ${pagina} de ${paginas} ·
       ${pagina > 1 ? `<a href="${esc(enlace(pagina - 1))}">← Anterior</a>` : ""}
       ${pagina < paginas ? `<a href="${esc(enlace(pagina + 1))}">Siguiente →</a>` : ""}</p>` : "";
     res.send(page("Briefings", `
-      <h1>Briefings recibidos</h1>
+      <h1>Briefings${esc(tipoTxt)} recibidos</h1>
       <form method="get" action="${esc(base)}" class="acciones">
-        <input class="campo" name="q" value="${esc(q)}" placeholder="Buscar por negocio, nombre o correo" style="flex:1;min-width:200px">
+        <input class="campo" name="q" value="${esc(q)}" placeholder="Buscar por nombre, negocio, correo o barrio" style="flex:1;min-width:200px">
         <select class="campo" name="estado"><option value="">Todos los estados</option>
           ${ESTADOS.map(e => `<option${e === estado ? " selected" : ""}>${esc(e)}</option>`).join("")}</select>
         <button class="btn" type="submit">Filtrar</button>
         <a class="btn s" href="${esc(base)}/export.csv">Descargar CSV</a>
       </form>
       <p class="muted">${total} ${q || estado ? "resultado(s)" : "en total"}</p>
-      <table><tr><th>Ref.</th><th>Fecha</th><th>Negocio</th><th>Contacto</th><th>Inversión</th><th>Estado</th></tr>
+      <table><tr><th>Ref.</th><th>Fecha</th><th>Cliente</th><th>Contacto</th><th>Inversión</th><th>Estado</th></tr>
       ${filas || '<tr><td colspan="6" class="muted">No hay respuestas.</td></tr>'}</table>
       ${nav}`, base));
   } catch (e) { console.error(e); res.status(500).send("Error del servidor"); }
@@ -344,9 +351,9 @@ panel.get("/:id", async (req, res) => {
         const v = (datos[q.id] || "").trim();
         return `<dt>${esc(q.l)}</dt><dd class="${v ? "" : "vacio"}">${v ? esc(v) : "—"}</dd>`;
       }).join("")}</dl></section>`).join("");
-    res.send(page(`Briefing ${datos.marca || id}`, `
-      <h1>${esc(datos.marca || "Briefing")}</h1>
-      <p class="muted">Briefing comercial #${id} · ${esc(fecha(creado))} · ${esc(datos.nombre)} · ${tag(estado)}</p>
+    res.send(page(`Briefing ${tituloDe(datos) || id}`, `
+      <h1>${esc(tituloDe(datos) || "Briefing")}</h1>
+      <p class="muted">Briefing${esc(tipoTxt)} #${id} · ${esc(fecha(creado))} · ${esc(datos.tel)} · ${tag(estado)}</p>
       <form method="post" action="${esc(base)}/${id}/estado" class="acciones">
         <a class="btn s" href="${esc(base)}">← Volver</a>
         <select class="campo" name="estado" aria-label="Estado">
